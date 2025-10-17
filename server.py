@@ -36,7 +36,20 @@ def today_folder() -> str:
 
 # ====== 구절 로드 ======
 with open("verses.json", "r", encoding="utf-8") as f:
-    VERSE = json.load(f)  # {"verse_id": "...", "text": "..."}
+    _raw = json.load(f)
+
+# 아래 형식 모두 지원:
+# 1) {"verse_id": "...", "text": "..."} (단일)
+# 2) [{"verse_id": "...", "text": "..."}, {...}] (배열)
+# 3) {"verses": [ {...}, {...} ]} (래핑)
+if isinstance(_raw, dict) and "verses" in _raw:
+    VERSES = _raw["verses"]
+elif isinstance(_raw, dict) and "text" in _raw:
+    VERSES = [_raw]
+elif isinstance(_raw, list):
+    VERSES = _raw
+else:
+    raise RuntimeError("verses.json 형식을 확인하세요. 'text' 포함 객체 또는 'verses' 배열 형식이어야 합니다.")
 
 # ====== OpenAI STT ======
 def stt_with_openai(audio_bytes: bytes) -> str:
