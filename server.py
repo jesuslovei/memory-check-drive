@@ -117,7 +117,10 @@ def drive_upload_file(local_path: Path, mime_type: str = "application/octet-stre
 # ====== FastAPI ======
 app = FastAPI(title="제자반 암송 자동확인 (Google Drive)")
 app.mount("/static", StaticFiles(directory="static"), name="static")
-
+@app.get("/verses")
+def get_verses():
+    # 프론트가 이번 주 구절을 읽어가는 API
+    return {"verses": VERSES}
 @app.get("/", response_class=HTMLResponse)
 def root():
     return FileResponse("static/index.html")
@@ -144,8 +147,31 @@ async def submit_audio(
         return JSONResponse({"ok": False, "error": f"STT 실패: {e}"}, status_code=500)
 
     # 2) 유사도 & 판정
-    score = similarity(transcript, VERSE["text"])
-    passed = score >= THRESHOLD
+    # 기존: 단일 구절 점수 계산
+# score = similarity(transcript, VERSE["text"])
+# passed = score >= THRESHOLD
+
+# 변경: 각 구절별 점수 계산 → 모두 임계치 이상이면 합격(A 방식)
+per_scores = []
+for v in VERSES:
+    s = similarity(transcript, v["text"])
+    per_scores.append({"verse_id": v.get("verse_id", ""), "score": round(s, 3)})
+
+passed = all(item["score"] >= THRESHOLD for item in per_scores)
+avg_score = round(sum(item["score"] for item in per_scores) / len(per_scores), 3)
+
+# CSV 로그 저장 열 정의도 업데이트
+row = {
+    "timestamp": datetime.now().isoformat(timespec="seconds"),
+    "name": name,
+    "verses": " | ".join([v.get("verse_id","") for v in VERSES]),
+    "target_texts": " | ".join([v.get("text","") for v in VERSES]),
+    "transcript": transcript,
+    "per_scores": "; ".join([f'{p["verse_id"]}:{p["score"]}' for p in per_scores]),
+    "avg_score": f"{avg_score:.3f}",
+    "passed": "Y" if passed else "N",
+}
+
 
     # 3) Google Drive 업로드 (음성 파일)
     drive_file = None
@@ -185,11 +211,12 @@ async def submit_audio(
     file_link = (drive_file or {}).get("webViewLink") or ""
     # 공개 안했으면 링크가 열리지 않을 수 있음
     return {
-        "ok": True,
-        "name": name,
-        "verse_id": VERSE.get("verse_id", ""),
-        "score": round(score, 3),
-        "passed": passed,
-        "transcript": transcript,
-        "file_link": file_link,
-    }
+    "ok": True,
+    "name": name,
+    "verses": [v.get("verse_id","") for v in VERSES],
+    "scores": per_scores,
+    "avg_score": avg_score,
+    "passed": passed,
+    "transcript": transcript,
+}
+
