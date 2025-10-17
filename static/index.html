@@ -1,77 +1,95 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="UTF-8">
   <title>암송 자동 확인</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    body { font-family: Arial, sans-serif; max-width:600px; margin:auto; padding:20px; }
-    .verse-box { background:#f5f5f5; padding:10px; margin-top:10px; border-radius:6px; }
-    button { margin-top:10px; padding:8px 16px; cursor:pointer; }
+    body { font-family: Arial, sans-serif; max-width: 420px; margin:auto; padding:16px; color:#222; }
+    h2 { text-align:center; color:#2c3e50; }
+    .box { background:#f4f6f8; padding:12px; border-radius:6px; margin-top:10px;}
+    button { width:100%; padding:12px; margin-top:8px; border:none; border-radius:6px;
+      font-size:16px; cursor:pointer; }
+    .record { background:#2c97de; color:white; }
+    .stop { background:#e67e22; color:white; }
+    .submit { background:#27ae60; color:white; }
+    .disabled { background:#95a5a6 !important; cursor:not-allowed; }
+    audio { width:100%; margin-top:10px; }
+    label { font-weight:bold; }
   </style>
 </head>
 <body>
-  <h2>📖 수요제자반 암송 자동 확인</h2>
-  <label>이름: <input id="name" placeholder="이름 입력" /></label><br/><br/>
+  <h2>📖 암송 자동 확인</h2>
 
-  <label>언어 선택:</label><br/>
+  <label>이름</label>
+  <input id="name" placeholder="이름을 입력하세요" style="width:100%;padding:8px">
+
+  <label style="margin-top:12px;display:block">언어 선택</label>
   <label><input type="radio" name="lang" value="kr" checked> 한국어</label>
   <label><input type="radio" name="lang" value="en"> English (ESV)</label>
 
-  <h3>이번 주 암송 구절</h3>
-  <div id="verses" class="verse-box">불러오는 중...</div>
+  <div class="box" id="verses">📌 구절을 불러오는 중...</div>
 
-  <button id="recordBtn">🎙️ 녹음 시작</button>
-  <button id="stopBtn" disabled>⏹️ 녹음 종료</button>
-  <button id="submitBtn" disabled>✅ 제출하기</button>
+  <button id="recordBtn" class="record">🎙️ 녹음 시작</button>
+  <button id="stopBtn" class="stop disabled" disabled>⏹️ 녹음 종료</button>
+  <button id="submitBtn" class="submit disabled" disabled>✅ 제출하기</button>
 
-  <p id="status"></p>
+  <audio id="audioPlayer" controls hidden></audio>
   <pre id="result"></pre>
-  <audio id="audioPlayer" controls style="display:none;"></audio>
 
-<script>
-let mediaRecorder, audioChunks = [];
+  <script>
+    let mediaRecorder, audioChunks = [];
 
-fetch("/verses").then(r => r.json()).then(data => {
-  const box = document.getElementById("verses");
-  box.innerHTML = data.verses.map(v => `<b>${v.verse_id}</b>`).join("<br/>");
-});
+    fetch("/verses").then(r=>r.json()).then(data=>{
+      document.getElementById("verses").innerHTML =
+        data.verses.map(v=>`<b>${v.verse_id}</b>`).join("<br>");
+    });
 
-document.getElementById("recordBtn").onclick = async () => {
-  audioChunks = [];
-  const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
-  mediaRecorder = new MediaRecorder(stream);
-  mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-  mediaRecorder.start();
-  document.getElementById("recordBtn").disabled = true;
-  document.getElementById("stopBtn").disabled = false;
-};
+    const recordBtn = document.getElementById("recordBtn");
+    const stopBtn = document.getElementById("stopBtn");
+    const submitBtn = document.getElementById("submitBtn");
 
-document.getElementById("stopBtn").onclick = () => {
-  mediaRecorder.stop();
-  mediaRecorder.onstop = () => {
-    const blob = new Blob(audioChunks, { type:"audio/webm" });
-    document.getElementById("audioPlayer").src = URL.createObjectURL(blob);
-    document.getElementById("audioPlayer").style.display = "block";
-    document.getElementById("submitBtn").disabled = false;
-  };
-  document.getElementById("stopBtn").disabled = true;
-};
+    recordBtn.onclick = async () => {
+      audioChunks = [];
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(stream);
+      mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+      mediaRecorder.start();
 
-document.getElementById("submitBtn").onclick = async () => {
-  const blob = new Blob(audioChunks, { type:"audio/webm" });
-  const form = new FormData();
-  form.append("audio", blob);
-  form.append("name", document.getElementById("name").value);
-  form.append("lang", document.querySelector("input[name='lang']:checked").value);
-  document.getElementById("status").innerText = "제출 중...";
+      recordBtn.classList.add("disabled"); recordBtn.disabled = true;
+      stopBtn.classList.remove("disabled"); stopBtn.disabled = false;
+    };
 
-  const res = await fetch("/submit", { method:"POST", body:form });
-  const data = await res.json();
-  document.getElementById("result").innerText =
-    `합격 여부: ${data.passed ? "✅ 합격" : "❌ 재도전"}\n\n점수:\n` +
-    data.scores.map(s => `${s.verse}: ${s.score}`).join("\n") +
-    `\n\n인식된 문장:\n${data.transcript}\n\n저장 링크:\n${data.file}`;
-};
-</script>
+    stopBtn.onclick = () => {
+      mediaRecorder.stop();
+      stopBtn.classList.add("disabled"); stopBtn.disabled = true;
+      submitBtn.classList.remove("disabled"); submitBtn.disabled = false;
+
+      mediaRecorder.onstop = () => {
+        const audio = new Blob(audioChunks, { type: "audio/webm" });
+        document.getElementById("audioPlayer").src = URL.createObjectURL(audio);
+        document.getElementById("audioPlayer").hidden = false;
+      };
+    };
+
+    submitBtn.onclick = async () => {
+      const blob = new Blob(audioChunks, { type: "audio/webm" });
+      const form = new FormData();
+      form.append("audio", blob);
+      form.append("name", document.getElementById("name").value);
+      form.append("lang", document.querySelector("input[name='lang']:checked").value);
+
+      submitBtn.textContent = "⏳ 제출 중...";
+      submitBtn.disabled = true;
+
+      const res = await fetch("/submit", { method: "POST", body: form });
+      const data = await res.json();
+
+      document.getElementById("result").textContent =
+        `✅ 이름: ${data.name}\n📖 결과: ${data.passed ? "✅ 합격" : "❌ 재도전"}\n\n점수:\n` +
+        data.scores.map(s => `- ${s.verse}: ${s.score}`).join("\n") +
+        `\n\n🎯 인식 문장:\n${data.transcript}\n\n📂 저장 링크:\n${data.file || "링크 없음"}`;
+    };
+  </script>
 </body>
 </html>
