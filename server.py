@@ -7,65 +7,96 @@ from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-# ===== 설정 =====
-THRESHOLD = 0.85
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_MODEL = "gpt-4o-transcribe"
+# ========================= 설정 ============================
+THRESHOLD = float(os.getenv("THRESHOLD", "0.85"))  # 합격 기준 점수
 
 # Google Drive
-GDRIVE_FOLDER_ID = os.getenv("GDRIVE_FOLDER_ID")
-GDRIVE_CREDENTIALS_JSON = os.getenv("GDRIVE_CREDENTIALS_JSON")
+GDRIVE_FOLDER_ID = os.getenv("GDRIVE_FOLDER_ID", "").strip()
+GDRIVE_CREDENTIALS_JSON = os.getenv("GDRIVE_CREDENTIALS_JSON", "")
+GDRIVE_PUBLIC_LINK = os.getenv("GDRIVE_PUBLIC_LINK", "false").lower() == "true"
 
+# 업로드 폴더
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-# ===== 유틸 =====
-def clean_text(s):
-    return re.sub(r"[\s\.,!?:;\"'\-—()\[\]]", "", s.lower())
+# ========================= 유틸 ============================
+def _normalize(s: str) -> str:
+    s = s.lower()
+    s = re.sub(r"[\s\.,!?:;\-—“”\"'()\[\]·…]", "", s)
+    return s
 
-def score(a, b):
-    return SequenceMatcher(None, clean_text(a), clean_text(b)).ratio()
+def _similarity(a: str, b: str) -> float:
+    return SequenceMatcher(None, _normalize(a), _normalize(b)).ratio()
 
-# ===== 구절 로드 =====
+# ========================= 구절 로드 ========================
 with open("verses.json", "r", encoding="utf-8") as f:
-    VERSES = json.load(f)["verses"]
+    raw = json.load(f)
+VERSES = raw["verses"] if isinstance(raw, dict) and "verses" in raw else raw
 
-# ===== STT =====
-def stt(audio_bytes):
-    from openai import OpenAI
-    client = OpenAI(api_key=OPENAI_API_KEY)
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp:
-        tmp.write(audio_bytes)
-        tmp.flush()
-        path = tmp.name
-    with open(path, "rb") as f:
-        result = client.audio.transcriptions.create(
-            model=OPENAI_MODEL,
-            file=f
-        )
-    return result.text
+# =================== Google Cloud Speech ===================
+from google.cloud import speech
+from google.oauth2.service_account import Credentials
 
-# ===== Google Drive =====
-_drive_service = None
-def drive():
-    from google.oauth2.service_account import Credentials
+def stt(audio_bytes: bytes, lang_hint: str | None = None) -> str:
+    """
+    Google Cloud Speech-to-Text (동기 인식).
+    MediaRecorder 기본(WebM/Opus) 지원.
+    """
+    creds_json = os.getenv("GCP_SPEECH_CREDENTIALS_JSON")
+    if not creds_json:
+        raise RuntimeError("GCP_SPEECH_CREDENTIALS_JSON is empty")
+
+    creds = Credentials.from_service_account_info(json.loads(creds_json))
+    client = speech.SpeechClient(credentials=creds)
+
+    # 언어 매핑
+    lang_map = {"kr": "ko-KR", "en": "en-US"}
+    language_code = lang_map.get((lang_hint or "").lower(), os.getenv("SPEECH_LOCALE_FALLBACK", "ko-KR"))
+
+    config = speech.RecognitionConfig(
+        encoding=speech.RecognitionConfig.AudioEncoding.WEBM_OPUS,
+        language_code=language_code,
+        enable_automatic_punctuation=True,
+        model="latest_long",
+    )
+    audio = speech.RecognitionAudio(content=audio_bytes)
+    resp = client.recognize(config=config, audio=audio, timeout=90)
+
+    lines = []
+    for result in resp.results:
+        if result.alternatives:
+            lines.append(result.alternatives[0].transcript)
+    return " ".join(lines).strip()
+
+# ====================== Google Drive =======================
+_drive = None
+def _drive_client():
     from googleapiclient.discovery import build
-    global _drive_service
-    if not _drive_service:
-        creds = Credentials.from_service_account_info(json.loads(GDRIVE_CREDENTIALS_JSON))
-        _drive_service = build("drive", "v3", credentials=creds)
-    return _drive_service
+    global _drive
+    if _drive: return _drive
+    if not GDRIVE_CREDENTIALS_JSON:
+        raise RuntimeError("GDRIVE_CREDENTIALS_JSON is empty")
+    creds = Credentials.from_service_account_info(json.loads(GDRIVE_CREDENTIALS_JSON))
+    _drive = build("drive", "v3", credentials=creds, cache_discovery=False)
+    return _drive
 
-def upload_to_drive(path):
+def upload_to_drive(path: Path, mime: str = "application/octet-stream") -> str:
     from googleapiclient.http import MediaFileUpload
-    file_meta = {"name": path.name, "parents": [GDRIVE_FOLDER_ID]}
-    media = MediaFileUpload(path, resumable=True)
-    file = drive().files().create(
-        body=file_meta, media_body=media, fields="id, webViewLink"
-    ).execute()
-    return file.get("webViewLink")
+    service = _drive_client()
+    meta = {"name": path.name, "parents": [GDRIVE_FOLDER_ID]} if GDRIVE_FOLDER_ID else {"name": path.name}
+    media = MediaFileUpload(str(path), mimetype=mime, resumable=True)
+    created = service.files().create(body=meta, media_body=media, fields="id, webViewLink").execute()
+    file_id = created.get("id")
 
-# ===== 서버 시작 =====
+    if GDRIVE_PUBLIC_LINK and file_id:
+        try:
+            service.permissions().create(fileId=file_id, body={"role": "reader", "type": "anyone"}).execute()
+            created = service.files().get(fileId=file_id, fields="id, webViewLink").execute()
+        except Exception:
+            pass
+    return created.get("webViewLink", "")
+
+# ========================== FastAPI ========================
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -74,36 +105,69 @@ def home():
     return FileResponse("static/index.html")
 
 @app.get("/verses")
-def verses():
+def get_verses():
+    # 프론트에 구절 목록 전달 (화면에는 verse_id만 표시)
     return {"verses": VERSES}
 
 @app.post("/submit")
-async def submit(audio: UploadFile = File(...), name: str = Form(...), lang: str = Form(...)):
-    audio_bytes = await audio.read()
-    filename = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{name}-{uuid.uuid4().hex[:6]}.webm"
-    path = UPLOAD_DIR / filename
-    path.write_bytes(audio_bytes)
+async def submit(
+    audio: UploadFile = File(...),
+    name: str = Form(...),
+    lang: str = Form("kr"),
+):
+    # 1) 파일 저장
+    b = await audio.read()
+    fname = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{name}-{uuid.uuid4().hex[:6]}.webm"
+    path = UPLOAD_DIR / fname
+    path.write_bytes(b)
 
-    transcript = stt(audio_bytes)
-    verse_scores = []
+    # 2) STT (언어 힌트 전달)
+    try:
+        transcript = stt(b, lang_hint=lang)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"STT failed: {e}"}, status_code=500)
+
+    # 3) 판정 (두 구절 모두 임계치 이상이어야 합격)
+    per_scores = []
     for v in VERSES:
         target = v["kr"] if lang == "kr" else v["en"]
-        verse_scores.append({
-            "verse": v["verse_id"],
-            "score": round(score(transcript, target), 3)
-        })
-    passed = all(v["score"] >= THRESHOLD for v in verse_scores)
+        per_scores.append({"verse": v.get("verse_id",""), "score": round(_similarity(transcript, target), 3)})
+    passed = all(s["score"] >= THRESHOLD for s in per_scores)
 
-    drive_link = upload_to_drive(path)
+    # 4) Drive 업로드(음성) + 로그 저장/업로드
+    link = ""
+    try:
+        link = upload_to_drive(path, mime="audio/webm")
+    except Exception:
+        link = ""
 
+    # CSV 로컬 기록
+    row = [
+        datetime.now().isoformat(timespec="seconds"),
+        name, lang, transcript,
+        "; ".join([f'{s["verse"]}:{s["score"]}' for s in per_scores]),
+        "Y" if passed else "N",
+        link
+    ]
+    write_header = not Path("submissions.csv").exists()
     with open("submissions.csv", "a", newline="", encoding="utf-8") as f:
-        csv.writer(f).writerow([name, lang, transcript, verse_scores, passed, drive_link])
+        w = csv.writer(f)
+        if write_header:
+            w.writerow(["timestamp","name","lang","transcript","per_scores","passed","drive_link"])
+        w.writerow(row)
+
+    # 로그도 드라이브에 업로드(새 버전으로 계속 쌓임)
+    try:
+        upload_to_drive(Path("submissions.csv"), mime="text/csv")
+    except Exception:
+        pass
 
     return {
         "ok": True,
         "name": name,
-        "scores": verse_scores,
+        "lang": lang,
+        "scores": per_scores,
         "passed": passed,
-        "file": drive_link,
-        "transcript": transcript
+        "transcript": transcript,
+        "file": link,
     }
