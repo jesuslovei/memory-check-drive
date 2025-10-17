@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>제자반 암송 자동 확인 (Google Drive)</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; max-width: 700px; margin: 40px auto; padding: 0 16px; }
+    .card { border: 1px solid #e5e7eb; border-radius: 14px; padding: 16px; margin: 12px 0; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+    button { padding: 10px 14px; border-radius: 10px; border: 1px solid #cbd5e1; cursor: pointer; background: #fff; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .verse { font-weight: 700; font-size: 1.05rem; }
+    .ok { color: #047857; font-weight: 800; }
+    .no { color: #b91c1c; font-weight: 800; }
+    .muted { color: #64748b; }
+    input[type="text"] { width: 100%; padding: 10px; border-radius: 10px; border: 1px solid #cbd5e1; }
+  </style>
+</head>
+<body>
+  <h1>제자반 암송 자동 확인</h1>
+  <p class="muted">이름을 적고 구절을 암송한 뒤, <b>녹음 → 정지 → 제출</b>을 눌러주세요.</p>
+
+  <div class="card">
+    <div>제출자 이름</div>
+    <input id="name" placeholder="홍길동"/>
+  </div>
+
+  <div class="card">
+    <div class="verse">이번 주 구절: <span id="verseId">불러오는 중...</span></div>
+    <div id="verseText" style="margin-top:6px;"></div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="gap:12px;">
+      <button id="recBtn">🎙️ 녹음 시작</button>
+      <button id="stopBtn" disabled>⏹️ 정지</button>
+      <audio id="player" controls style="flex:1; min-width: 260px;"></audio>
+    </div>
+    <div style="margin-top:10px;">
+      <button id="sendBtn" disabled>📤 제출</button>
+    </div>
+    <div id="status" class="muted" style="margin-top:10px;"></div>
+  </div>
+
+  <div class="card" id="result" style="display:none;">
+    <div>인식 텍스트:</div>
+    <div id="transcript" style="white-space:pre-wrap;margin:8px 0;"></div>
+    <div>점수: <b id="score"></b> / 판정: <span id="passed"></span></div>
+    <div>파일 링크: <a id="fileLink" href="#" target="_blank">열기</a> <span class="muted">(비공개 설정이면 열리지 않을 수 있음)</span></div>
+  </div>
+
+  <script>
+    // 구절 정보를 서버에서 표시
+    fetch('/static/../verses.json').then(r=>r.json()).then(v=>{
+      verseId.textContent = v.verse_id;
+      verseText.textContent = '“' + v.text + '”';
+    }).catch(()=>{
+      verseId.textContent = '(로딩 실패)';
+      verseText.textContent = '';
+    });
+
+    let mediaRecorder, chunks=[];
+    recBtn.onclick = async ()=>{
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+        mediaRecorder = new MediaRecorder(stream, {mimeType:'audio/webm'});
+        chunks = [];
+        mediaRecorder.ondataavailable = e => { if (e.data.size>0) chunks.push(e.data); };
+        mediaRecorder.onstop = ()=>{
+          const blob = new Blob(chunks, {type:'audio/webm'});
+          const url = URL.createObjectURL(blob);
+          player.src = url;
+          player.dataset.bloburl = url;
+          sendBtn.disabled = false;
+        };
+        mediaRecorder.start();
+        recBtn.disabled = true;
+        stopBtn.disabled = false;
+        status.textContent = '녹음 중... 구절을 또박또박 암송해 주세요.';
+      } catch(e) {
+        alert('마이크 접근을 허용해 주세요.');
+      }
+    };
+
+    stopBtn.onclick = ()=>{
+      mediaRecorder?.stop();
+      recBtn.disabled = false;
+      stopBtn.disabled = true;
+      status.textContent = '녹음 완료. 제출 버튼을 눌러 주세요.';
+    };
+
+    sendBtn.onclick = async ()=>{
+      status.textContent = '제출 중...';
+      const nameVal = document.getElementById('name').value || '익명';
+      const blob = await fetch(player.dataset.bloburl).then(r=>r.blob());
+      const form = new FormData();
+      form.append('audio', blob, 'rec.webm');
+      form.append('name', nameVal);
+      try{
+        const res = await fetch('/submit', {method:'POST', body:form});
+        const data = await res.json();
+        if(!data.ok){ status.textContent = '오류: ' + (data.error||'제출 실패'); return; }
+        transcript.textContent = data.transcript || '(인식 결과 없음)';
+        score.textContent = data.score.toFixed(3);
+        passed.textContent = data.passed? '합격 ✅':'재도전 ❌';
+        passed.className = data.passed? 'ok':'no';
+        result.style.display = '';
+        status.textContent = '제출 완료!';
+        if (data.file_link) {
+          const a = document.getElementById('fileLink');
+          a.href = data.file_link;
+          a.textContent = '열기';
+        }
+      } catch(e){
+        status.textContent = '네트워크 오류: 다시 시도해 주세요.';
+      }
+    };
+  </script>
+</body>
+</html>

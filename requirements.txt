@@ -1,0 +1,8 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.9
+pydantic==2.9.2
+openai==1.52.0
+google-api-python-client==2.154.0
+google-auth==2.35.0
+google-auth-httplib2==0.2.0
