@@ -51,9 +51,23 @@
 
   <script>
     // 구절 정보를 서버에서 표시
-    fetch('/static/../verses.json').then(r=>r.json()).then(v=>{
-      verseId.textContent = v.verse_id;
-      verseText.textContent = '“' + v.text + '”';
+    fetch('/verses')
+  .then(r => r.json())
+  .then(data => {
+    const verses = data.verses || [];
+    if (verses.length === 0) {
+      verseId.textContent = '(구절 없음)';
+      verseText.textContent = '';
+      return;
+    }
+    // 여러 구절을 줄바꿈으로 보여주기
+    verseId.textContent = verses.map(v => v.verse_id || '').join(' / ');
+    verseText.innerHTML = verses.map(v => '“' + (v.text || '') + '”').join('<br/>');
+  })
+  .catch(() => {
+    verseId.textContent = '(로딩 실패)';
+    verseText.textContent = '';
+  });
     }).catch(()=>{
       verseId.textContent = '(로딩 실패)';
       verseText.textContent = '';
@@ -97,15 +111,26 @@
       form.append('audio', blob, 'rec.webm');
       form.append('name', nameVal);
       try{
-        const res = await fetch('/submit', {method:'POST', body:form});
         const data = await res.json();
-        if(!data.ok){ status.textContent = '오류: ' + (data.error||'제출 실패'); return; }
-        transcript.textContent = data.transcript || '(인식 결과 없음)';
-        score.textContent = data.score.toFixed(3);
-        passed.textContent = data.passed? '합격 ✅':'재도전 ❌';
-        passed.className = data.passed? 'ok':'no';
-        result.style.display = '';
-        status.textContent = '제출 완료!';
+if(!data.ok){ status.textContent = '오류: ' + (data.error||'제출 실패'); return; }
+transcript.textContent = data.transcript || '(인식 결과 없음)';
+score.textContent = (data.avg_score ?? data.score ?? 0).toFixed(3);
+passed.textContent = data.passed? '합격 ✅(모든 구절)' : '재도전 ❌(하나 이상 미달)';
+passed.className = data.passed? 'ok':'no';
+
+// 구절별 점수 표기(있으면)
+if (Array.isArray(data.scores)) {
+  const lines = data.scores.map(s => `${s.verse_id || ''}: ${Number(s.score).toFixed(3)}`);
+  const per = document.createElement('div');
+  per.style.marginTop = '6px';
+  per.className = 'muted';
+  per.textContent = '구절별 점수 → ' + lines.join(' / ');
+  document.getElementById('result').appendChild(per);
+}
+
+result.style.display = '';
+status.textContent = '제출 완료!';
+
         if (data.file_link) {
           const a = document.getElementById('fileLink');
           a.href = data.file_link;
