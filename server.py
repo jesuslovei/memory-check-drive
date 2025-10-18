@@ -83,22 +83,44 @@ def _drive_client():
     return _drive
 
 def _ensure_folder(parent_id: str, name: str) -> str:
-    """기존 폴더 검색 → 없으면 생성."""
+    """공유 드라이브 대응: supportsAllDrives / corpora / driveId 사용"""
     svc = _drive_client()
-    q = f"mimeType='application/vnd.google-apps.folder' and name='{name}' and '{parent_id}' in parents"
-    res = svc.files().list(q=q, fields="files(id)").execute()
-    files = res.get("files", [])
-    if files:
-        return files[0]["id"]
-    folder = svc.files().create(body={"name": name, "mimeType": "application/vnd.google-apps.folder", "parents": [parent_id]}, fields="id").execute()
-    return folder["id"]
+    # parent_id가 Shared Drive 내부 폴더이므로, 그 드라이브 ID를 추출해 주면 가장 정확합니다.
+    # 간단하게는 includeItemsFromAllDrives=True, supportsAllDrives=True만으로도 동작합니다.
+    q = (
+        "mimeType='application/vnd.google-apps.folder' "
+        f"and name='{name}' and '{parent_id}' in parents and trashed=false"
+    )
+    res = svc.files().list(
+        q=q,
+        fields="files(id,name,parents)",
+        pageSize=1,
+        includeItemsFromAllDrives=True,
+        supportsAllDrives=True,
+        corpora="allDrives",
+    ).execute()
+    items = res.get("files", [])
+    if items:
+        return items[0]["id"]
+
+    meta = {
+        "name": name,
+        "mimeType": "application/vnd.google-apps.folder",
+        "parents": [parent_id],
+    }
+    created = svc.files().create(
+        body=meta,
+        fields="id",
+        supportsAllDrives=True
+    ).execute()
+    return created["id"]
 
 def upload_file_to_drive(path: Path, week_id: str, mime_type: str):
-    """Google Drive에 업로드 (주차별 audio 저장 안정화 버전)."""
+    """Shared Drive 업로드 안정화 버전."""
     svc = _drive_client()
 
-    # ✅ MIME 자동 보정 (iPhone/Android 대응)
-    if not mime_type or mime_type == "":
+    # MIME 보정(원본 유지)
+    if not mime_type:
         mime_type = "application/octet-stream"
     elif "audio/mp4" in mime_type or "mp4" in mime_type or "m4a" in mime_type:
         mime_type = "audio/m4a"
@@ -108,36 +130,35 @@ def upload_file_to_drive(path: Path, week_id: str, mime_type: str):
         mime_type = "audio/ogg"
 
     try:
-        # ✅ audio/week_id 폴더 자동 생성
-        week_folder = _ensure_folder(GDRIVE_FOLDER_ID, "audio")
-        week_subfolder = _ensure_folder(week_folder, week_id)
+        # audio / week_id 하위 폴더 보장
+        audio_root = _ensure_folder(GDRIVE_FOLDER_ID, "audio")
+        week_folder = _ensure_folder(audio_root, week_id)
 
-        # ✅ 업로드 실행
         media = MediaFileUpload(str(path), mimetype=mime_type, resumable=True)
-        file_metadata = {"name": path.name, "parents": [week_subfolder]}
+        meta = {"name": path.name, "parents": [week_folder]}
 
         file = svc.files().create(
-            body=file_metadata,
+            body=meta,
             media_body=media,
-            fields="id, webViewLink"
+            fields="id, webViewLink, parents",
+            supportsAllDrives=True
         ).execute()
 
-        # ✅ 공개 링크 옵션
         if GDRIVE_PUBLIC_LINK:
             try:
                 svc.permissions().create(
                     fileId=file["id"],
-                    body={"type": "anyone", "role": "reader"}
+                    body={"type": "anyone", "role": "reader"},
+                    supportsAllDrives=True
                 ).execute()
             except Exception as pe:
-                print(f"⚠️ 공개 링크 설정 실패 (무시): {pe}")
+                print(f"⚠️ 공개 링크 설정 실패(무시): {pe}")
 
-        return file.get("webViewLink")
-
+        return file.get("webViewLink", "")
     except Exception as e:
-        print(f"🚨 [Drive Upload Error] 파일 업로드 실패: {e}")
-        print(f"📌 파일경로: {path}, MIME: {mime_type}, WEEK: {week_id}")
-        return ""  # 서버 죽지 않게 안전 처리
+        print(f"🚨 [Drive Upload Error] {e}")
+        print(f"📌 path={path} mime={mime_type} week={week_id}")
+        return ""
 
 # ============ FastAPI 서버 ============
 app = FastAPI()
