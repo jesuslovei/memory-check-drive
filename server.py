@@ -32,6 +32,9 @@ def _similarity(a: str, b: str) -> float:
 # ========================= 구절 로드 ========================
 with open("verses.json", "r", encoding="utf-8") as f:
     raw = json.load(f)
+
+WEEK_ID = raw.get("week_id", datetime.now().strftime("%Y-%m-%d"))
+WEEK_TITLE = raw.get("title", WEEK_ID)
 VERSES = raw["verses"] if isinstance(raw, dict) and "verses" in raw else raw
 
 # =================== Google Cloud Speech ===================
@@ -114,20 +117,26 @@ def _ensure_child_folder(parent_id: str, name: str) -> str:
     created = svc.files().create(body=meta, fields="id").execute()
     return created["id"]
 
-def upload_to_drive(path: Path, mime: str = "application/octet-stream", kind: str = "file") -> str:
+def upload_to_drive(path: Path, mime: str = "application/octet-stream", kind: str = "file", week_id: str = "") -> str:
     """
-    kind: 'audio' | 'log'  →  {루트}/audio/ 또는 {루트}/logs/ 하위에 저장
+    kind: 'audio' | 'log'
+    저장 경로: {루트}/{kind}/{week_id}/ 파일
     """
     from googleapiclient.http import MediaFileUpload
     svc = _drive_client()
     if not GDRIVE_FOLDER_ID:
         raise RuntimeError("GDRIVE_FOLDER_ID is empty")
 
-    # 상위/하위 폴더 자동 구성
-    parent = _ensure_child_folder(GDRIVE_FOLDER_ID, "audio" if kind == "audio" else "logs")
+    root = GDRIVE_FOLDER_ID
+    sub = "audio" if kind == "audio" else "logs"
+    sub_id = _ensure_child_folder(root, sub)
+    week_id = week_id or WEEK_ID
+    week_id = str(week_id).strip() or "week"
+    week_id = week_id.replace("/", "-")
+    week_folder_id = _ensure_child_folder(sub_id, week_id)
 
     media = MediaFileUpload(str(path), mimetype=mime, resumable=True)
-    meta = {"name": path.name, "parents": [parent]}
+    meta = {"name": path.name, "parents": [week_folder_id]}
     created = svc.files().create(body=meta, media_body=media, fields="id, webViewLink").execute()
 
     file_id = created.get("id")
@@ -152,7 +161,7 @@ def home():
 
 @app.get("/verses")
 def get_verses():
-    return {"verses": VERSES}
+    return {"week_id": WEEK_ID, "title": WEEK_TITLE, "verses": VERSES}
 
 @app.post("/submit")
 async def submit(
@@ -161,6 +170,7 @@ async def submit(
     lang: str = Form("kr"),
     verse_idx: Optional[int] = Form(None),  # 0 또는 1: 개별 채점, None이면 전 구절
     mime: Optional[str] = Form(None),       # 프론트에서 전달한 녹음 MIME
+    week_id: Optional[str] = Form(None),    # 프론트에서 보낸 주차 (없으면 verses.json의 week_id)
 ):
     # 1) 파일 저장 (기기 MIME을 반영해 확장자 결정)
     b = await audio.read()
@@ -194,11 +204,12 @@ async def submit(
             scores.append({"verse": v.get("verse_id", ""), "score": round(_similarity(transcript, target), 3)})
         passed = all(s["score"] >= THRESHOLD for s in scores)
 
-    # 4) Drive 업로드 (음성) + CSV 기록/업로드
+    # 4) Drive 업로드 (음성) + CSV 기록/업로드 (주차별 하위 폴더)
     upload_mime = (mime or "application/octet-stream")
+    week = (week_id or WEEK_ID)
     link = ""
     try:
-        link = upload_to_drive(path, mime=upload_mime, kind="audio")
+        link = upload_to_drive(path, mime=upload_mime, kind="audio", week_id=week)
     except Exception:
         link = ""
 
@@ -206,9 +217,10 @@ async def submit(
     with open("submissions.csv", "a", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         if write_header:
-            w.writerow(["timestamp","name","lang","verse_idx","verses","transcript","scores","passed","drive_link"])
+            w.writerow(["timestamp","week_id","name","lang","verse_idx","verses","transcript","scores","passed","drive_link"])
         w.writerow([
             datetime.now().isoformat(timespec="seconds"),
+            week,
             name,
             lang,
             ("" if verse_idx is None else int(verse_idx)),
@@ -220,7 +232,7 @@ async def submit(
         ])
 
     try:
-        upload_to_drive(Path("submissions.csv"), mime="text/csv", kind="log")
+        upload_to_drive(Path("submissions.csv"), mime="text/csv", kind="log", week_id=week)
     except Exception:
         pass
 
@@ -233,4 +245,5 @@ async def submit(
         "transcript": transcript,
         "file": link,
         "verse_idx": verse_idx,
+        "week_id": week,
     }
