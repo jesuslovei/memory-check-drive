@@ -38,58 +38,74 @@
   <pre id="result"></pre>
 
   <script>
-    let mediaRecorder, audioChunks = [];
+  let mediaRecorder, audioChunks = [], verses = [];
 
-    fetch("/verses").then(r=>r.json()).then(data=>{
-      document.getElementById("verses").innerHTML =
-        data.verses.map(v=>`<b>${v.verse_id}</b>`).join("<br>");
-    });
+  fetch("/verses").then(r=>r.json()).then(data=>{
+    verses = data.verses || [];
+    // 구절 목록 + 선택 라디오 렌더
+    const box = document.getElementById("verses");
+    box.innerHTML = verses.map((v,i)=>`
+      <label style="display:block;margin:4px 0;">
+        <input type="radio" name="vsel" value="${i}" ${i===0?'checked':''}>
+        <b>${v.verse_id}</b>
+      </label>
+    `).join("");
+  });
 
-    const recordBtn = document.getElementById("recordBtn");
-    const stopBtn = document.getElementById("stopBtn");
-    const submitBtn = document.getElementById("submitBtn");
+  const recordBtn = document.getElementById("recordBtn");
+  const stopBtn = document.getElementById("stopBtn");
+  const submitBtn = document.getElementById("submitBtn");
 
-    recordBtn.onclick = async () => {
-      audioChunks = [];
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorder = new MediaRecorder(stream);
-      mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-      mediaRecorder.start();
+  recordBtn.onclick = async () => {
+    audioChunks = [];
+    const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+    mediaRecorder = new MediaRecorder(stream);
+    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+    mediaRecorder.start();
+    recordBtn.disabled = true; stopBtn.disabled = false;
+  };
 
-      recordBtn.classList.add("disabled"); recordBtn.disabled = true;
-      stopBtn.classList.remove("disabled"); stopBtn.disabled = false;
+  stopBtn.onclick = () => {
+    mediaRecorder.stop();
+    stopBtn.disabled = true; submitBtn.disabled = false;
+    mediaRecorder.onstop = () => {
+      const blob = new Blob(audioChunks, { type:"audio/webm" });
+      const ap = document.getElementById("audioPlayer");
+      ap.src = URL.createObjectURL(blob); ap.hidden = false;
     };
+  };
 
-    stopBtn.onclick = () => {
-      mediaRecorder.stop();
-      stopBtn.classList.add("disabled"); stopBtn.disabled = true;
-      submitBtn.classList.remove("disabled"); submitBtn.disabled = false;
+  submitBtn.onclick = async () => {
+    const blob = new Blob(audioChunks, { type:"audio/webm" });
+    const form = new FormData();
+    form.append("audio", blob);
+    form.append("name", document.getElementById("name").value);
+    form.append("lang", document.querySelector("input[name='lang']:checked").value);
+    // ★ 선택된 구절만 채점(0 또는 1). 둘 다 채점하고 싶으면 이 줄을 빼면 됩니다.
+    const vsel = document.querySelector("input[name='vsel']:checked");
+    if (vsel) form.append("verse_idx", vsel.value);
+  
+    submitBtn.textContent = "⏳ 제출 중..."; submitBtn.disabled = true;
+  
+    const res = await fetch("/submit", { method:"POST", body:form });
+    const data = await res.json();
+  
+    const lines = (data.scores || []).map(s => `- ${s.verse}: ${s.score}`).join("\n");
+    document.getElementById("result").textContent =
+  `✅ 이름: ${data.name}
+  📖 결과: ${data.passed ? "✅ 합격" : "❌ 재도전"}
 
-      mediaRecorder.onstop = () => {
-        const audio = new Blob(audioChunks, { type: "audio/webm" });
-        document.getElementById("audioPlayer").src = URL.createObjectURL(audio);
-        document.getElementById("audioPlayer").hidden = false;
-      };
-    };
+  점수:
+  ${lines}
 
-    submitBtn.onclick = async () => {
-      const blob = new Blob(audioChunks, { type: "audio/webm" });
-      const form = new FormData();
-      form.append("audio", blob);
-      form.append("name", document.getElementById("name").value);
-      form.append("lang", document.querySelector("input[name='lang']:checked").value);
+  🎯 인식 문장:
+  ${data.transcript}
 
-      submitBtn.textContent = "⏳ 제출 중...";
-      submitBtn.disabled = true;
+  📂 저장 링크:
+  ${data.file || "링크 없음"}`;
 
-      const res = await fetch("/submit", { method: "POST", body: form });
-      const data = await res.json();
-
-      document.getElementById("result").textContent =
-        `✅ 이름: ${data.name}\n📖 결과: ${data.passed ? "✅ 합격" : "❌ 재도전"}\n\n점수:\n` +
-        data.scores.map(s => `- ${s.verse}: ${s.score}`).join("\n") +
-        `\n\n🎯 인식 문장:\n${data.transcript}\n\n📂 저장 링크:\n${data.file || "링크 없음"}`;
-    };
+    submitBtn.textContent = "✅ 제출하기"; submitBtn.disabled = false;
+  };
   </script>
 </body>
 </html>
