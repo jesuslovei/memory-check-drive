@@ -37,75 +37,112 @@
   <audio id="audioPlayer" controls hidden></audio>
   <pre id="result"></pre>
 
-  <script>
-  let mediaRecorder, audioChunks = [], verses = [];
+<script>
+let mediaRecorder, audioChunks = [], verses = [], recMime = "";
 
-  fetch("/verses").then(r=>r.json()).then(data=>{
-    verses = data.verses || [];
-    // 구절 목록 + 선택 라디오 렌더
-    const box = document.getElementById("verses");
-    box.innerHTML = verses.map((v,i)=>`
-      <label style="display:block;margin:4px 0;">
-        <input type="radio" name="vsel" value="${i}" ${i===0?'checked':''}>
-        <b>${v.verse_id}</b>
-      </label>
-    `).join("");
-  });
+fetch("/verses").then(r=>r.json()).then(data=>{
+  verses = data.verses || [];
+  const box = document.getElementById("verses");
+  // 구절 라디오 (개별 채점 가능)
+  box.innerHTML = verses.map((v,i)=>`
+    <label style="display:block;margin:4px 0;">
+      <input type="radio" name="vsel" value="${i}" ${i===0?'checked':''}>
+      <b>${v.verse_id}</b>
+    </label>
+  `).join("");
+});
 
-  const recordBtn = document.getElementById("recordBtn");
-  const stopBtn = document.getElementById("stopBtn");
-  const submitBtn = document.getElementById("submitBtn");
+const recordBtn = document.getElementById("recordBtn");
+const stopBtn = document.getElementById("stopBtn");
+const submitBtn = document.getElementById("submitBtn");
+const statusEl = document.getElementById("status");
+const resultEl = document.getElementById("result");
 
-  recordBtn.onclick = async () => {
-    audioChunks = [];
-    const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
-    mediaRecorder = new MediaRecorder(stream);
-    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-    mediaRecorder.start();
-    recordBtn.disabled = true; stopBtn.disabled = false;
+recordBtn.onclick = async () => {
+  audioChunks = [];
+  const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+
+  // ★ 기기별 가장 잘 지원되는 MIME 선택 (iOS=mp4, Android=webm/ogg)
+  const cand = [
+    "audio/webm;codecs=opus",
+    "audio/ogg;codecs=opus",
+    "audio/mp4",            // iPhone Safari
+    "audio/mpeg"            // 일부 브라우저 fallback
+  ];
+  recMime = cand.find(t => MediaRecorder.isTypeSupported(t)) || "";
+  mediaRecorder = new MediaRecorder(stream, recMime ? { mimeType: recMime } : undefined);
+
+  mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+  mediaRecorder.start();
+
+  recordBtn.disabled = true;
+  stopBtn.disabled = false;
+  statusEl.textContent = "녹음 중...";
+};
+
+stopBtn.onclick = () => {
+  mediaRecorder.stop();
+  stopBtn.disabled = true;
+  submitBtn.disabled = false;
+
+  mediaRecorder.onstop = () => {
+    const blob = new Blob(audioChunks, { type: recMime || "audio/webm" });
+    const ap = document.getElementById("audioPlayer");
+    ap.src = URL.createObjectURL(blob);
+    ap.hidden = false;
+    statusEl.textContent = "녹음 완료. 제출 가능.";
   };
+};
 
-  stopBtn.onclick = () => {
-    mediaRecorder.stop();
-    stopBtn.disabled = true; submitBtn.disabled = false;
-    mediaRecorder.onstop = () => {
-      const blob = new Blob(audioChunks, { type:"audio/webm" });
-      const ap = document.getElementById("audioPlayer");
-      ap.src = URL.createObjectURL(blob); ap.hidden = false;
-    };
-  };
-
-  submitBtn.onclick = async () => {
-    const blob = new Blob(audioChunks, { type:"audio/webm" });
+submitBtn.onclick = async () => {
+  try {
+    const blob = new Blob(audioChunks, { type: recMime || "audio/webm" });
     const form = new FormData();
-    form.append("audio", blob);
+    form.append("audio", blob, "rec");     // 파일명은 아무거나 OK
+    form.append("mime", recMime);          // ★ 서버로 녹음 MIME 전달
     form.append("name", document.getElementById("name").value);
     form.append("lang", document.querySelector("input[name='lang']:checked").value);
-    // ★ 선택된 구절만 채점(0 또는 1). 둘 다 채점하고 싶으면 이 줄을 빼면 됩니다.
     const vsel = document.querySelector("input[name='vsel']:checked");
-    if (vsel) form.append("verse_idx", vsel.value);
-  
-    submitBtn.textContent = "⏳ 제출 중..."; submitBtn.disabled = true;
-  
-    const res = await fetch("/submit", { method:"POST", body:form });
-    const data = await res.json();
-  
+    if (vsel) form.append("verse_idx", vsel.value);  // 개별 채점
+
+    submitBtn.textContent = "⏳ 제출 중...";
+    submitBtn.disabled = true;
+
+    const res = await fetch("/submit", { method:"POST", body: form });
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok || !data.ok) {
+      const msg = (data && data.error) ? data.error : `HTTP ${res.status}`;
+      statusEl.textContent = `제출 실패: ${msg}`;
+      submitBtn.textContent = "✅ 제출하기";
+      submitBtn.disabled = false;
+      return;
+    }
+
     const lines = (data.scores || []).map(s => `- ${s.verse}: ${s.score}`).join("\n");
-    document.getElementById("result").textContent =
-  `✅ 이름: ${data.name}
-  📖 결과: ${data.passed ? "✅ 합격" : "❌ 재도전"}
+    resultEl.textContent =
+`✅ 이름: ${data.name}
+📖 결과: ${data.passed ? "✅ 합격" : "❌ 재도전"}
 
-  점수:
-  ${lines}
+점수:
+${lines}
 
-  🎯 인식 문장:
-  ${data.transcript}
+🎯 인식 문장:
+${data.transcript}
 
-  📂 저장 링크:
-  ${data.file || "링크 없음"}`;
+📂 저장 링크:
+${data.file || "링크 없음"}`;
 
-    submitBtn.textContent = "✅ 제출하기"; submitBtn.disabled = false;
-  };
-  </script>
+    statusEl.textContent = "제출 완료!";
+    submitBtn.textContent = "✅ 제출하기";
+    submitBtn.disabled = false;
+  } catch (e) {
+    statusEl.textContent = "제출 실패(네트워크/서버 오류).";
+    submitBtn.textContent = "✅ 제출하기";
+    submitBtn.disabled = false;
+  }
+};
+</script>
+
 </body>
 </html>
