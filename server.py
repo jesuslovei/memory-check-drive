@@ -137,11 +137,14 @@ def get_verses():
     # 프론트에 구절 목록 전달 (화면에는 verse_id만 표시)
     return {"verses": VERSES}
 
+from typing import Optional
+
 @app.post("/submit")
 async def submit(
     audio: UploadFile = File(...),
     name: str = Form(...),
     lang: str = Form("kr"),
+    verse_idx: Optional[int] = Form(None),   # ★ 추가: 0 or 1
 ):
     # 1) 파일 저장
     b = await audio.read()
@@ -149,44 +152,57 @@ async def submit(
     path = UPLOAD_DIR / fname
     path.write_bytes(b)
 
-    # 2) STT (언어 힌트 전달)
+    # 2) STT
     try:
         transcript = stt(b, lang_hint=lang)
     except Exception as e:
         return JSONResponse({"ok": False, "error": f"STT failed: {e}"}, status_code=500)
 
-    # 3) 판정 (두 구절 모두 임계치 이상이어야 합격)
-    per_scores = []
-    for v in VERSES:
+    # 3) 채점
+    scores = []
+    if verse_idx is not None:
+        # 한 구절만
+        v = VERSES[int(verse_idx)]
         target = v["kr"] if lang == "kr" else v["en"]
-        per_scores.append({"verse": v.get("verse_id",""), "score": round(_similarity(transcript, target), 3)})
-    passed = all(s["score"] >= THRESHOLD for s in per_scores)
+        s = round(_similarity(transcript, target), 3)
+        scores.append({"verse": v.get("verse_id",""), "score": s})
+        passed = (s >= THRESHOLD)
+    else:
+        # 기존: 모든 구절
+        for v in VERSES:
+            target = v["kr"] if lang == "kr" else v["en"]
+            scores.append({"verse": v.get("verse_id",""), "score": round(_similarity(transcript, target), 3)})
+        passed = all(s["score"] >= THRESHOLD for s in [*scores])
 
-    # 4) Drive 업로드(음성) + 로그 저장/업로드
+    # 4) Drive 업로드
     link = ""
     try:
-        link = upload_to_drive(path, mime="audio/webm")
-    except Exception:
+        link = upload_to_drive(path, mime="audio/webm", kind="audio")
+    except Exception as e:
+        # 링크 실패해도 CSV는 기록
         link = ""
 
-    # CSV 로컬 기록
-    row = [
-        datetime.now().isoformat(timespec="seconds"),
-        name, lang, transcript,
-        "; ".join([f'{s["verse"]}:{s["score"]}' for s in per_scores]),
-        "Y" if passed else "N",
-        link
-    ]
+    # 5) CSV 기록 (verse_idx 포함)
     write_header = not Path("submissions.csv").exists()
     with open("submissions.csv", "a", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         if write_header:
-            w.writerow(["timestamp","name","lang","transcript","per_scores","passed","drive_link"])
-        w.writerow(row)
+            w.writerow(["timestamp","name","lang","verse_idx","verses","transcript","scores","passed","drive_link"])
+        w.writerow([
+            datetime.now().isoformat(timespec="seconds"),
+            name,
+            lang,
+            ("" if verse_idx is None else int(verse_idx)),
+            " | ".join(v.get("verse_id","") for v in VERSES),
+            transcript,
+            "; ".join(f'{s["verse"]}:{s["score"]}' for s in scores),
+            "Y" if passed else "N",
+            link
+        ])
 
-    # 로그도 드라이브에 업로드(새 버전으로 계속 쌓임)
+    # CSV도 드라이브에 동기화
     try:
-        upload_to_drive(Path("submissions.csv"), mime="text/csv")
+        upload_to_drive(Path("submissions.csv"), mime="text/csv", kind="log")
     except Exception:
         pass
 
@@ -194,8 +210,9 @@ async def submit(
         "ok": True,
         "name": name,
         "lang": lang,
-        "scores": per_scores,
+        "scores": scores,
         "passed": passed,
         "transcript": transcript,
         "file": link,
+        "verse_idx": verse_idx,
     }
