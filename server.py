@@ -80,21 +80,49 @@ def _drive_client():
     _drive = build("drive", "v3", credentials=creds, cache_discovery=False)
     return _drive
 
-def upload_to_drive(path: Path, mime: str = "application/octet-stream") -> str:
-    from googleapiclient.http import MediaFileUpload
-    service = _drive_client()
-    meta = {"name": path.name, "parents": [GDRIVE_FOLDER_ID]} if GDRIVE_FOLDER_ID else {"name": path.name}
-    media = MediaFileUpload(str(path), mimetype=mime, resumable=True)
-    created = service.files().create(body=meta, media_body=media, fields="id, webViewLink").execute()
-    file_id = created.get("id")
+def _ensure_child_folder(parent_id: str, name: str) -> str:
+    """parent_id 아래에 name 폴더가 없으면 만들고, 있으면 그 id 반환"""
+    svc = _drive_client()
+    q = f"mimeType='application/vnd.google-apps.folder' and name='{name}' and '{parent_id}' in parents and trashed=false"
+    res = svc.files().list(q=q, fields="files(id,name)", pageSize=1).execute()
+    items = res.get("files", [])
+    if items:
+        return items[0]["id"]
+    meta = {"name": name, "mimeType": "application/vnd.google-apps.folder", "parents": [parent_id]}
+    created = svc.files().create(body=meta, fields="id").execute()
+    return created["id"]
 
+def upload_to_drive(path: Path, mime: str = "application/octet-stream", kind: str = "file") -> str:
+    """
+    kind: 'audio' | 'log'  →  audio/ 또는 logs/ 하위에 저장
+    """
+    from googleapiclient.http import MediaFileUpload
+    svc = _drive_client()
+    if not GDRIVE_FOLDER_ID:
+        raise RuntimeError("GDRIVE_FOLDER_ID is empty")
+
+    # 상위/하위 폴더 자동 구성: {루트}/audio, {루트}/logs
+    target_parent = GDRIVE_FOLDER_ID
+    sub = "audio" if kind == "audio" else "logs"
+    target_parent = _ensure_child_folder(target_parent, sub)
+
+    media = MediaFileUpload(str(path), mimetype=mime, resumable=True)
+    meta = {"name": path.name, "parents": [target_parent]}
+    created = svc.files().create(body=meta, media_body=media, fields="id, webViewLink").execute()
+
+    file_id = created.get("id")
+    webViewLink = created.get("webViewLink", "")
+
+    # 공개 링크(옵션)
     if GDRIVE_PUBLIC_LINK and file_id:
         try:
-            service.permissions().create(fileId=file_id, body={"role": "reader", "type": "anyone"}).execute()
-            created = service.files().get(fileId=file_id, fields="id, webViewLink").execute()
-        except Exception:
+            svc.permissions().create(fileId=file_id, body={"role": "reader", "type": "anyone"}).execute()
+            created = svc.files().get(fileId=file_id, fields="id, webViewLink").execute()
+            webViewLink = created.get("webViewLink", webViewLink)
+        except Exception as e:
+            # 링크 생성 실패 시에도 업로드는 성공했으니 조용히 진행
             pass
-    return created.get("webViewLink", "")
+    return webViewLink
 
 # ========================== FastAPI ========================
 app = FastAPI()
