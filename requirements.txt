@@ -1,9 +1,8 @@
 fastapi
 uvicorn
 python-multipart
-openai
+google-cloud-speech
 google-api-python-client
 google-auth
 google-auth-httplib2
 google-auth-oauthlib
-google-cloud-speech
