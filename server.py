@@ -94,22 +94,51 @@ def _ensure_folder(parent_id: str, name: str) -> str:
     return folder["id"]
 
 def upload_file_to_drive(path: Path, week_id: str, mime_type: str):
-    """Google Drive에 업로드 (주차별 audio 저장)."""
+    """Google Drive에 업로드 (주차별 audio 저장 안정화 버전)."""
     svc = _drive_client()
-    week_folder = _ensure_folder(GDRIVE_FOLDER_ID, "audio")
-    week_subfolder = _ensure_folder(week_folder, week_id)
 
-    media = MediaFileUpload(str(path), mimetype=mime_type)
-    file_metadata = {"name": path.name, "parents": [week_subfolder]}
+    # ✅ MIME 자동 보정 (iPhone/Android 대응)
+    if not mime_type or mime_type == "":
+        mime_type = "application/octet-stream"
+    elif "audio/mp4" in mime_type or "mp4" in mime_type or "m4a" in mime_type:
+        mime_type = "audio/m4a"
+    elif "webm" in mime_type:
+        mime_type = "audio/webm"
+    elif "ogg" in mime_type:
+        mime_type = "audio/ogg"
 
     try:
-        file = svc.files().create(body=file_metadata, media_body=media, fields="id,webViewLink").execute()
+        # ✅ audio/week_id 폴더 자동 생성
+        week_folder = _ensure_folder(GDRIVE_FOLDER_ID, "audio")
+        week_subfolder = _ensure_folder(week_folder, week_id)
+
+        # ✅ 업로드 실행
+        media = MediaFileUpload(str(path), mimetype=mime_type, resumable=True)
+        file_metadata = {"name": path.name, "parents": [week_subfolder]}
+
+        file = svc.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields="id, webViewLink"
+        ).execute()
+
+        # ✅ 공개 링크 옵션
         if GDRIVE_PUBLIC_LINK:
-            svc.permissions().create(fileId=file["id"], body={"type": "anyone", "role": "reader"}).execute()
+            try:
+                svc.permissions().create(
+                    fileId=file["id"],
+                    body={"type": "anyone", "role": "reader"}
+                ).execute()
+            except Exception as pe:
+                print(f"⚠️ 공개 링크 설정 실패 (무시): {pe}")
+
         return file.get("webViewLink")
+
     except Exception as e:
-        print(f"🚨 Drive Upload Error: {e}")
-        raise
+        print(f"🚨 [Drive Upload Error] 파일 업로드 실패: {e}")
+        print(f"📌 파일경로: {path}, MIME: {mime_type}, WEEK: {week_id}")
+        return ""  # 서버 죽지 않게 안전 처리
+
 # ============ FastAPI 서버 ============
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
