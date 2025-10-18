@@ -37,10 +37,12 @@ VERSES = raw["verses"] if isinstance(raw, dict) and "verses" in raw else raw
 from google.cloud import speech
 from google.oauth2.service_account import Credentials
 
-def stt(audio_bytes: bytes, lang_hint: str | None = None) -> str:
+def stt(audio_bytes: bytes, lang_hint: str | None = None, mime_hint: str | None = None) -> str:
     """
-    Google Cloud Speech-to-Text (동기 인식).
-    MediaRecorder 기본(WebM/Opus) 지원.
+    Google Cloud Speech-to-Text.
+    - iOS: audio/mp4  → ENC. UNSPECIFIED 로 자동 감지
+    - Android/Chrome: audio/webm(opus) → WEBM_OPUS
+    - Firefox/등: audio/ogg(opus) → OGG_OPUS
     """
     creds_json = os.getenv("GCP_SPEECH_CREDENTIALS_JSON")
     if not creds_json:
@@ -49,12 +51,23 @@ def stt(audio_bytes: bytes, lang_hint: str | None = None) -> str:
     creds = Credentials.from_service_account_info(json.loads(creds_json))
     client = speech.SpeechClient(credentials=creds)
 
-    # 언어 매핑
+    # 언어 결정
     lang_map = {"kr": "ko-KR", "en": "en-US"}
     language_code = lang_map.get((lang_hint or "").lower(), os.getenv("SPEECH_LOCALE_FALLBACK", "ko-KR"))
 
+    # MIME → 인코딩 매핑
+    enc = speech.RecognitionConfig.AudioEncoding.ENCODING_UNSPECIFIED
+    if mime_hint:
+      mh = mime_hint.lower()
+      if "webm" in mh:
+          enc = speech.RecognitionConfig.AudioEncoding.WEBM_OPUS
+      elif "ogg" in mh:
+          enc = speech.RecognitionConfig.AudioEncoding.OGG_OPUS
+      else:
+          enc = speech.RecognitionConfig.AudioEncoding.ENCODING_UNSPECIFIED  # mp4, m4a 등은 자동감지
+
     config = speech.RecognitionConfig(
-        encoding=speech.RecognitionConfig.AudioEncoding.WEBM_OPUS,
+        encoding=enc,
         language_code=language_code,
         enable_automatic_punctuation=True,
         model="latest_long",
@@ -62,11 +75,11 @@ def stt(audio_bytes: bytes, lang_hint: str | None = None) -> str:
     audio = speech.RecognitionAudio(content=audio_bytes)
     resp = client.recognize(config=config, audio=audio, timeout=90)
 
-    lines = []
-    for result in resp.results:
-        if result.alternatives:
-            lines.append(result.alternatives[0].transcript)
-    return " ".join(lines).strip()
+    out = []
+    for r in resp.results:
+        if r.alternatives:
+            out.append(r.alternatives[0].transcript)
+    return " ".join(out).strip()
 
 # ====================== Google Drive =======================
 _drive = None
@@ -144,7 +157,8 @@ async def submit(
     audio: UploadFile = File(...),
     name: str = Form(...),
     lang: str = Form("kr"),
-    verse_idx: Optional[int] = Form(None),   # ★ 추가: 0 or 1
+    verse_idx: Optional[int] = Form(None),   # (이전 단계에서 이미 추가했을 것)
+    mime: Optional[str] = Form(None),        # ★ 추가: 프론트에서 보낸 녹음 MIME
 ):
     # 1) 파일 저장
     b = await audio.read()
@@ -154,7 +168,7 @@ async def submit(
 
     # 2) STT
     try:
-        transcript = stt(b, lang_hint=lang)
+        transcript = stt(b, lang_hint=lang, mime_hint=mime)
     except Exception as e:
         return JSONResponse({"ok": False, "error": f"STT failed: {e}"}, status_code=500)
 
