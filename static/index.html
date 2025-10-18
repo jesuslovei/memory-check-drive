@@ -1,268 +1,269 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>암송 자동 확인</title>
-<style>
-  :root{
-    --bg:#ffffff; --fg:#222; --muted:#6b7280;
-    --card:#f4f6f8; --border:#e5e7eb;
-    --brand:#2563eb; --brand-weak:#dbeafe;
-    --ok:#16a34a; --warn:#f59e0b; --danger:#dc2626;
-  }
-  @media (prefers-color-scheme: dark){
-    :root{ --bg:#0b0f14; --fg:#e5e7eb; --card:#0f1720; --border:#1f2937; --brand:#3b82f6; --brand-weak:#10213d; }
-  }
-  *{box-sizing:border-box}
-  body{background:var(--bg); color:var(--fg); font-family:system-ui,-apple-system,Segoe UI,Roboto,Apple SD Gothic Neo,Noto Sans KR,Helvetica,Arial,sans-serif; max-width:560px; margin:0 auto; padding:20px}
-  h2{margin:0 0 8px; font-size:22px; text-align:center}
-  .muted{color:var(--muted)}
-  .card{background:var(--card); border:1px solid var(--border); border-radius:12px; padding:12px; margin-top:12px}
-  label{font-weight:600; display:block; margin:14px 0 6px}
-  input[type=text]{width:100%; padding:12px; border-radius:10px; border:1px solid var(--border); background:transparent; color:inherit}
-  .seg{display:flex; gap:8px; flex-wrap:wrap}
-  .chip{padding:8px 10px; border:1px solid var(--border); border-radius:999px; cursor:pointer}
-  .chip.active{background:var(--brand); color:#fff; border-color:var(--brand)}
-  .verse-list{display:grid; gap:8px; margin-top:6px}
-  .verse-option{display:flex; align-items:center; gap:10px; padding:10px 12px; border:1px solid var(--border); border-radius:10px; background:#fff0; cursor:pointer; transition:all .15s}
-  .verse-option .bullet{width:18px; height:18px; border-radius:50%; border:2px solid var(--muted); display:inline-flex; align-items:center; justify-content:center; font-size:12px; color:transparent}
-  .verse-option.active{border-color:var(--brand); background:var(--brand-weak)}
-  .verse-option.active .bullet{border-color:var(--brand); background:var(--brand); color:#fff; content:"✓"}
-  .btn{width:100%; padding:14px; border:none; border-radius:12px; font-weight:700; font-size:16px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:10px; transition:all .15s}
-  .btn:disabled{cursor:not-allowed; opacity:.6}
-  .btn-record{background:var(--brand); color:#fff}
-  .btn-stop{background:var(--warn); color:#fff}
-  .btn-submit{background:var(--ok); color:#fff}
-  .row{display:flex; gap:10px}
-  .row .btn{flex:1}
-  .status{margin-top:10px; font-size:14px}
-  .status.bad{color:var(--danger)} .status.ok{color:var(--ok)}
-  audio{width:100%; margin-top:8px}
-  .spinner{width:16px;height:16px;border-radius:50%; border:3px solid rgba(255,255,255,.35); border-top-color:#fff; animation:spin .8s linear infinite}
-  @keyframes spin{to{transform:rotate(360deg)}}
-  .dot{width:10px; height:10px; border-radius:50%; background:#ef4444; position:relative}
-  .dot::after{content:""; position:absolute; inset:-6px; border-radius:50%; border:2px solid #ef4444; opacity:.6; animation:pulse 1.2s infinite}
-  @keyframes pulse{0%{transform:scale(0.8);opacity:.6}100%{transform:scale(1.6);opacity:0}}
-  .history{margin-top:12px; display:grid; gap:8px}
-  .entry{border:1px solid var(--border); border-radius:10px; padding:10px; background:#fff0}
-  .entry .title{font-weight:700}
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>말씀 암송 제출</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --fg: #1e293b;
+      --muted: #64748b;
+      --card: #f8fafc;
+      --border: #e2e8f0;
+      --brand: #2563eb;
+      --brand-light: #dbeafe;
+      --success: #16a34a;
+      --warn: #eab308;
+      --danger: #dc2626;
+    }
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", sans-serif;
+      max-width: 600px;
+      margin: auto;
+      padding: 20px;
+      line-height: 1.5;
+    }
+    h1 {
+      text-align: center;
+      margin-bottom: 10px;
+      font-size: 22px;
+    }
+    .card {
+      background: var(--card);
+      padding: 16px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      margin-bottom: 15px;
+    }
+    label {
+      font-size: 14px;
+      font-weight: 600;
+      display: block;
+      margin-bottom: 6px;
+    }
+    input, select {
+      width: 100%;
+      padding: 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      margin-bottom: 12px;
+      font-size: 15px;
+    }
+    .verse-item {
+      display: flex;
+      align-items: center;
+      padding: 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      margin-bottom: 6px;
+      cursor: pointer;
+    }
+    .verse-item.active {
+      background: var(--brand-light);
+      border-color: var(--brand);
+    }
+    button {
+      width: 100%;
+      padding: 12px;
+      border: none;
+      font-size: 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      margin-top: 10px;
+      font-weight: 600;
+    }
+    .record-btn { background: var(--brand); color: white; }
+    .stop-btn { background: var(--warn); color: black; }
+    .submit-btn { background: var(--success); color: white; }
+    .hidden { display: none; }
+    audio { width: 100%; margin-top: 10px; }
+    #history { margin-top: 15px; }
+    .history-item {
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+  </style>
 </head>
 <body>
-  <h2>📖 제자반 암송 자동 확인</h2>
-  <p class="muted" id="weekMeta" style="text-align:center;margin-top:-6px;">불러오는 중…</p>
-
+  <h1>말씀 암송 제출</h1>
   <div class="card">
+    <label>주차 선택</label>
+    <select id="weekSelect"></select>
+
     <label>이름</label>
-    <input id="name" type="text" placeholder="이름을 입력하세요" autocomplete="name" />
+    <input id="name" placeholder="이름을 입력하세요" autocomplete="off" />
 
     <label>언어 선택</label>
-    <div class="seg" id="langSeg">
-      <div class="chip active" data-lang="kr">한국어</div>
-      <div class="chip" data-lang="en">English (ESV)</div>
-    </div>
+    <select id="lang">
+      <option value="kr">한국어</option>
+      <option value="en">English (ESV)</option>
+    </select>
 
-    <label>이번 주 구절 선택</label>
-    <div id="verses" class="verse-list"></div>
+    <label>구절 선택</label>
+    <div id="verseList"></div>
+  </div>
+  <div class="card">
+    <button id="recordBtn" class="record-btn">🎙 녹음 시작</button>
+    <button id="stopBtn" class="stop-btn hidden">⏹ 녹음 종료</button>
+    <audio id="audioPlayer" class="hidden" controls></audio>
+    <button id="submitBtn" class="submit-btn hidden">✅ 제출하기</button>
+    <p id="status" style="margin-top: 8px; font-size: 14px; color: var(--muted);"></p>
   </div>
 
   <div class="card">
-    <div class="row">
-      <button id="recordBtn" class="btn btn-record"><span id="recIcon">🎙️</span><span id="recText">녹음 시작</span></button>
-      <button id="stopBtn" class="btn btn-stop" disabled>⏹️ 녹음 종료</button>
-    </div>
-    <button id="submitBtn" class="btn btn-submit" style="margin-top:10px" disabled>✅ 제출하기</button>
-
-    <div class="status" id="status"></div>
-    <audio id="audioPlayer" controls hidden></audio>
-  </div>
-
-  <div class="card">
-    <div class="history" id="history"></div>
+    <h3>📜 제출 기록</h3>
+    <div id="history"></div>
   </div>
 
 <script>
-let mediaRecorder, audioChunks = [], verses = [], recMime = "", recording = false;
-let currentLang = "kr", verseIdx = 0, weekId = "", weekTitle = "";
+let verses = [];
+let selectedVerse = 0;
+let mediaRecorder;
+let audioChunks = [];
+let audioBlob = null;
+let mimeType = "";
+let nowWeekId = "";
+let recorderActive = false;
 
-const weekMeta = document.getElementById("weekMeta");
-const versesBox = document.getElementById("verses");
-const recordBtn = document.getElementById("recordBtn");
-const stopBtn = document.getElementById("stopBtn");
-const submitBtn = document.getElementById("submitBtn");
-const statusEl = document.getElementById("status");
-const audioPlayer = document.getElementById("audioPlayer");
-const recIcon = document.getElementById("recIcon");
-const recText = document.getElementById("recText");
-const historyBox = document.getElementById("history");
+// ====== 구절 불러오기 ======
+async function loadVerses(weekId = null) {
+  const res = await fetch("/verses");
+  const data = await res.json();
+  nowWeekId = data.week_id;
+  verses = data.verses;
 
-// 언어 토글
-document.getElementById("langSeg").addEventListener("click",(e)=>{
-  const chip = e.target.closest(".chip"); if(!chip) return;
-  [...e.currentTarget.querySelectorAll(".chip")].forEach(x=>x.classList.remove("active"));
-  chip.classList.add("active");
-  currentLang = chip.dataset.lang || "kr";
-});
+  document.getElementById("weekSelect").innerHTML = `
+    <option value="${nowWeekId}">${data.title} (이번 주)</option>
+    <option value="2025-01-01">지난 주 예시</option>
+  `;
 
-// 구절/주차 불러오기
-fetch("/verses").then(r=>r.json()).then(data=>{
-  verses = data.verses || [];
-  weekId = data.week_id || "";
-  weekTitle = data.title || weekId;
-  weekMeta.textContent = `주차: ${weekTitle}`;
   renderVerses();
-});
-
-function renderVerses(){
-  versesBox.innerHTML = verses.map((v,i)=>`
-    <div class="verse-option ${i===verseIdx?'active':''}" data-idx="${i}">
-      <div class="bullet">✓</div>
-      <div class="verse-id">${v.verse_id}</div>
-    </div>
-  `).join("");
-}
-versesBox.addEventListener("click",(e)=>{
-  const opt = e.target.closest(".verse-option"); if(!opt) return;
-  [...versesBox.querySelectorAll(".verse-option")].forEach(x=>x.classList.remove("active"));
-  opt.classList.add("active");
-  verseIdx = Number(opt.dataset.idx || 0);
-});
-
-function setStatus(msg, type){
-  statusEl.textContent = msg || "";
-  statusEl.className = "status" + (type ? " " + type : "");
 }
 
-recordBtn.onclick = async () => {
-  try{
+function renderVerses() {
+  const container = document.getElementById("verseList");
+  container.innerHTML = "";
+  verses.forEach((v, i) => {
+    const div = document.createElement("div");
+    div.className = "verse-item" + (i === 0 ? " active" : "");
+    div.innerText = v.verse_id;
+    div.onclick = () => {
+      document.querySelectorAll(".verse-item").forEach(e => e.classList.remove("active"));
+      div.classList.add("active");
+      selectedVerse = i;
+    };
+    container.appendChild(div);
+  });
+}
+
+// ====== 녹음 ======
+document.getElementById("recordBtn").onclick = async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
+
+    mediaRecorder = new MediaRecorder(stream, { mimeType });
     audioChunks = [];
-    const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
-    const cand = [
-      "audio/webm;codecs=opus",
-      "audio/ogg;codecs=opus",
-      "audio/mp4",
-      "audio/mpeg"
-    ];
-    recMime = cand.find(t => MediaRecorder.isTypeSupported(t)) || "";
-    mediaRecorder = new MediaRecorder(stream, recMime ? { mimeType: recMime } : undefined);
+
     mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
     mediaRecorder.onstop = () => {
-      const blob = new Blob(audioChunks, { type: recMime || "audio/webm" });
-      audioPlayer.src = URL.createObjectURL(blob);
-      audioPlayer.hidden = false;
-      submitBtn.disabled = false;
-      setStatus("녹음 완료. 제출할 수 있습니다.", "ok");
-      recIcon.textContent = "🎙️"; recText.textContent = "녹음 시작";
-      recording = false;
+      audioBlob = new Blob(audioChunks, { type: mimeType });
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const player = document.getElementById("audioPlayer");
+      player.src = audioUrl;
+      player.classList.remove("hidden");
+
+      document.getElementById("submitBtn").classList.remove("hidden");
+      document.getElementById("stopBtn").classList.add("hidden");
+      document.getElementById("recordBtn").classList.remove("hidden");
+      document.getElementById("status").innerText = "녹음 완료. 제출하세요.";
     };
+
     mediaRecorder.start();
-    recording = true;
-    recIcon.innerHTML = '<span class="dot"></span>'; recText.textContent = "녹음 중…";
-    setStatus("마이크 사용 중… 말씀이 끝나면 ‘녹음 종료’를 누르세요.", "");
-    recordBtn.disabled = true; stopBtn.disabled = false;
-  }catch(e){
-    setStatus("마이크 권한이 거부되었거나 사용할 수 없습니다.", "bad");
+    document.getElementById("recordBtn").classList.add("hidden");
+    document.getElementById("stopBtn").classList.remove("hidden");
+    document.getElementById("status").innerText = "녹음 중...";
+  } catch (err) {
+    alert("마이크 권한을 허용해주세요.");
   }
 };
 
-stopBtn.onclick = () => {
-  try{
-    if(mediaRecorder && recording){
-      mediaRecorder.stop();
-      stopBtn.disabled = true; recordBtn.disabled = false;
-    }
-  }catch(e){
-    setStatus("녹음 종료 중 오류가 발생했습니다.", "bad");
-  }
+document.getElementById("stopBtn").onclick = () => {
+  mediaRecorder.stop();
 };
+// ====== 제출 ======
+document.getElementById("submitBtn").onclick = async () => {
+  const name = document.getElementById("name").value.trim();
+  const lang = document.getElementById("lang").value;
+  const weekId = document.getElementById("weekSelect").value;
 
-submitBtn.onclick = async () => {
-  try{
-    const name = document.getElementById("name").value.trim();
-    if(!name){ setStatus("이름을 입력하세요.", "bad"); return; }
-    if(audioChunks.length === 0){ setStatus("먼저 녹음하세요.", "bad"); return; }
+  if (!name) {
+    alert("이름을 입력해주세요.");
+    return;
+  }
+  if (!audioBlob) {
+    alert("녹음 후 제출해주세요.");
+    return;
+  }
 
-    const blob = new Blob(audioChunks, { type: recMime || "audio/webm" });
-    const form = new FormData();
-    form.append("audio", blob, "rec");
-    form.append("mime", recMime);
-    form.append("name", name);
-    form.append("lang", currentLang);
-    form.append("verse_idx", String(verseIdx));
-    form.append("week_id", weekId);
+  const formData = new FormData();
+  formData.append("audio", audioBlob, "recording");
+  formData.append("name", name);
+  formData.append("lang", lang);
+  formData.append("verse_idx", selectedVerse);
+  formData.append("week_id", weekId);
+  formData.append("mime", mimeType);
 
-    // 버튼 로딩
-    submitBtn.disabled = true;
-    const oldHtml = submitBtn.innerHTML;
-    submitBtn.innerHTML = '<span class="spinner"></span> 제출 중…';
-    setStatus("제출 중… 잠시만 기다려주세요.", "");
+  document.getElementById("status").innerText = "제출 중...";
 
-    const res = await fetch("/submit", { method:"POST", body: form });
-    const data = await res.json().catch(()=>({ok:false,error:"서버 응답 파싱 실패"}));
-
-    submitBtn.disabled = false;
-    submitBtn.innerHTML = oldHtml;
-
-    if(!res.ok || !data.ok){
-      const msg = (data && data.error) ? data.error : `HTTP ${res.status}`;
-      setStatus(`제출 실패: ${msg}`, "bad");
-      return;
-    }
-
-    // 누적 기록에 추가
-    addHistoryEntry({
-      idx: verseIdx,
-      verse_id: (verses[verseIdx] || {}).verse_id || `#${verseIdx+1}`,
-      passed: !!data.passed,
-      scores: data.scores || [],
-      transcript: data.transcript || "",
-      link: data.file || "",
+  try {
+    const response = await fetch("/submit", {
+      method: "POST",
+      body: formData,
     });
+    const result = await response.json();
 
-    setStatus("제출 완료!", "ok");
+    if (result.ok) {
+      addHistory(result);
+      document.getElementById("status").innerText = "제출 완료 ✅";
 
-    // 다음 구절로 자동 진행
-    if (verses.length > 0){
-      verseIdx = (verseIdx + 1) % verses.length;
-      renderVerses();
-      // 다음 구절을 바로 녹음할 수 있게 상태 초기화
-      audioChunks = [];
-      audioPlayer.hidden = true;
-      submitBtn.disabled = true;
-      recordBtn.disabled = false; stopBtn.disabled = true;
-      recIcon.textContent = "🎙️"; recText.textContent = "녹음 시작";
-      if (verseIdx === 0) {
-        setStatus("이번 주 두 구절 제출이 완료되었습니다.", "ok");
-      } else {
-        setStatus("다음 구절을 녹음해 주세요.", "");
+      // 다음 구절 자동 이동
+      if (selectedVerse < verses.length - 1) {
+        selectedVerse++;
+        document.querySelectorAll(".verse-item").forEach((e, i) => {
+          e.classList.toggle("active", i === selectedVerse);
+        });
       }
+    } else {
+      document.getElementById("status").innerText = "제출 실패 ❌";
     }
-  }catch(e){
-    submitBtn.disabled = false;
-    setStatus("제출 중 오류가 발생했습니다. 네트워크 상태를 확인하세요.", "bad");
+  } catch (e) {
+    document.getElementById("status").innerText = "서버 오류 발생 ❗";
   }
 };
 
-function addHistoryEntry({idx, verse_id, passed, scores, transcript, link}){
+// ====== 제출 기록 추가 ======
+function addHistory(result) {
   const div = document.createElement("div");
-  div.className = "entry";
+  div.className = "history-item";
   div.innerHTML = `
-    <div class="title">#${idx+1} ${verse_id} — ${passed ? "✅ 합격" : "❌ 재도전"}</div>
-    <div style="margin-top:6px">
-      <div><b>점수</b></div>
-      <div>${(scores||[]).map(s => `${s.verse}: ${s.score}`).join("<br>")}</div>
-    </div>
-    <div style="margin-top:6px">
-      <div><b>인식 문장</b></div>
-      <div style="white-space:pre-wrap">${transcript || "-"}</div>
-    </div>
-    <div style="margin-top:6px">
-      <b>링크</b>: ${link ? `<a href="${link}" target="_blank" rel="noopener">${link}</a>` : "없음"}
-    </div>
+    <b>${result.week_id}</b> | ${verses[selectedVerse].verse_id}<br>
+    ✔ 점수: ${result.score} / 통과: ${result.passed ? "✅" : "❌"}<br>
+    🎧 <a href="${result.file_url}" target="_blank">녹음파일 보기</a><br>
+    🗣 ${result.transcript}
   `;
-  historyBox.prepend(div); // 최신 제출이 위로 오도록
+  document.getElementById("history").prepend(div);
 }
+
+// ====== 실행 ======
+loadVerses();
 </script>
 </body>
 </html>
