@@ -3,24 +3,23 @@ from datetime import datetime
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Optional
-
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-# ========================= 설정 ============================
-THRESHOLD = float(os.getenv("THRESHOLD", "0.85"))  # 합격 임계치
+# ============ 환경설정 ============
+THRESHOLD = float(os.getenv("THRESHOLD", "0.85"))  # 합격 기준
 
 # Google Drive
 GDRIVE_FOLDER_ID = os.getenv("GDRIVE_FOLDER_ID", "").strip()
 GDRIVE_CREDENTIALS_JSON = os.getenv("GDRIVE_CREDENTIALS_JSON", "")
 GDRIVE_PUBLIC_LINK = os.getenv("GDRIVE_PUBLIC_LINK", "false").lower() == "true"
 
-# 업로드 폴더(로컬 보관)
+# 업로드 폴더
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-# ========================= 유틸 ============================
+# ============ 유틸 함수 ============
 def _normalize(s: str) -> str:
     s = s.lower()
     s = re.sub(r"[\s\.,!?:;\-—“”\"'()\[\]·…]", "", s)
@@ -29,37 +28,26 @@ def _normalize(s: str) -> str:
 def _similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, _normalize(a), _normalize(b)).ratio()
 
-# ========================= 구절 로드 ========================
+# ============ 구절 로드 ============
 with open("verses.json", "r", encoding="utf-8") as f:
     raw = json.load(f)
 
 WEEK_ID = raw.get("week_id", datetime.now().strftime("%Y-%m-%d"))
 WEEK_TITLE = raw.get("title", WEEK_ID)
-VERSES = raw["verses"] if isinstance(raw, dict) and "verses" in raw else raw
+VERSES = raw["verses"]
 
-# =================== Google Cloud Speech ===================
+# ============ Google Speech-To-Text ============
 from google.cloud import speech
 from google.oauth2.service_account import Credentials
 
 def stt(audio_bytes: bytes, lang_hint: Optional[str] = None, mime_hint: Optional[str] = None) -> str:
-    """
-    Google Cloud Speech-to-Text.
-    - iOS: audio/mp4  → ENC. UNSPECIFIED(자동감지)
-    - Android/Chrome: audio/webm;codecs=opus → WEBM_OPUS
-    - Firefox/기타: audio/ogg;codecs=opus → OGG_OPUS
-    """
     creds_json = os.getenv("GCP_SPEECH_CREDENTIALS_JSON")
-    if not creds_json:
-        raise RuntimeError("GCP_SPEECH_CREDENTIALS_JSON is empty")
-
     creds = Credentials.from_service_account_info(json.loads(creds_json))
     client = speech.SpeechClient(credentials=creds)
 
-    # 언어 결정
     lang_map = {"kr": "ko-KR", "en": "en-US"}
-    language_code = lang_map.get((lang_hint or "").lower(), os.getenv("SPEECH_LOCALE_FALLBACK", "ko-KR"))
+    language_code = lang_map.get((lang_hint or "").lower(), "ko-KR")
 
-    # MIME → 인코딩 매핑
     enc = speech.RecognitionConfig.AudioEncoding.ENCODING_UNSPECIFIED
     if mime_hint:
         mh = mime_hint.lower()
@@ -67,8 +55,6 @@ def stt(audio_bytes: bytes, lang_hint: Optional[str] = None, mime_hint: Optional
             enc = speech.RecognitionConfig.AudioEncoding.WEBM_OPUS
         elif "ogg" in mh:
             enc = speech.RecognitionConfig.AudioEncoding.OGG_OPUS
-        else:
-            enc = speech.RecognitionConfig.AudioEncoding.ENCODING_UNSPECIFIED  # mp4/m4a 등
 
     config = speech.RecognitionConfig(
         encoding=enc,
@@ -79,79 +65,52 @@ def stt(audio_bytes: bytes, lang_hint: Optional[str] = None, mime_hint: Optional
     audio = speech.RecognitionAudio(content=audio_bytes)
     resp = client.recognize(config=config, audio=audio, timeout=90)
 
-    out = []
-    for r in resp.results:
-        if r.alternatives:
-            out.append(r.alternatives[0].transcript)
-    return " ".join(out).strip()
+    return " ".join(r.alternatives[0].transcript for r in resp.results if r.alternatives).strip()
+# ============ Google Drive 업로드 ============
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
 
-# ====================== Google Drive =======================
 _drive = None
+
 def _drive_client():
-    from googleapiclient.discovery import build
     global _drive
     if _drive:
         return _drive
     if not GDRIVE_CREDENTIALS_JSON:
-        raise RuntimeError("GDRIVE_CREDENTIALS_JSON is empty")
+        raise RuntimeError("🚨 GDRIVE_CREDENTIALS_JSON 환경변수가 비어있습니다.")
     creds = Credentials.from_service_account_info(json.loads(GDRIVE_CREDENTIALS_JSON))
     _drive = build("drive", "v3", credentials=creds, cache_discovery=False)
     return _drive
 
-def _ensure_child_folder(parent_id: str, name: str) -> str:
-    """parent_id 아래에 name 폴더가 없으면 만들고, 있으면 그 id 반환"""
+def _ensure_folder(parent_id: str, name: str) -> str:
+    """기존 폴더 검색 → 없으면 생성."""
     svc = _drive_client()
-    q = (
-        "mimeType='application/vnd.google-apps.folder' "
-        f"and name='{name}' and '{parent_id}' in parents and trashed=false"
-    )
-    res = svc.files().list(q=q, fields="files(id,name)", pageSize=1).execute()
-    items = res.get("files", [])
-    if items:
-        return items[0]["id"]
-    meta = {
-        "name": name,
-        "mimeType": "application/vnd.google-apps.folder",
-        "parents": [parent_id],
-    }
-    created = svc.files().create(body=meta, fields="id").execute()
-    return created["id"]
+    q = f"mimeType='application/vnd.google-apps.folder' and name='{name}' and '{parent_id}' in parents"
+    res = svc.files().list(q=q, fields="files(id)").execute()
+    files = res.get("files", [])
+    if files:
+        return files[0]["id"]
+    folder = svc.files().create(body={"name": name, "mimeType": "application/vnd.google-apps.folder", "parents": [parent_id]}, fields="id").execute()
+    return folder["id"]
 
-def upload_to_drive(path: Path, mime: str = "application/octet-stream", kind: str = "file", week_id: str = "") -> str:
-    """
-    kind: 'audio' | 'log'
-    저장 경로: {루트}/{kind}/{week_id}/ 파일
-    """
-    from googleapiclient.http import MediaFileUpload
+def upload_file_to_drive(path: Path, week_id: str, mime_type: str):
+    """Google Drive에 업로드 (주차별 audio 저장)."""
     svc = _drive_client()
-    if not GDRIVE_FOLDER_ID:
-        raise RuntimeError("GDRIVE_FOLDER_ID is empty")
+    week_folder = _ensure_folder(GDRIVE_FOLDER_ID, "audio")
+    week_subfolder = _ensure_folder(week_folder, week_id)
 
-    root = GDRIVE_FOLDER_ID
-    sub = "audio" if kind == "audio" else "logs"
-    sub_id = _ensure_child_folder(root, sub)
-    week_id = week_id or WEEK_ID
-    week_id = str(week_id).strip() or "week"
-    week_id = week_id.replace("/", "-")
-    week_folder_id = _ensure_child_folder(sub_id, week_id)
+    media = MediaFileUpload(str(path), mimetype=mime_type)
+    file_metadata = {"name": path.name, "parents": [week_subfolder]}
 
-    media = MediaFileUpload(str(path), mimetype=mime, resumable=True)
-    meta = {"name": path.name, "parents": [week_folder_id]}
-    created = svc.files().create(body=meta, media_body=media, fields="id, webViewLink").execute()
-
-    file_id = created.get("id")
-    link = created.get("webViewLink", "")
-
-    if GDRIVE_PUBLIC_LINK and file_id:
-        try:
-            svc.permissions().create(fileId=file_id, body={"role": "reader", "type": "anyone"}).execute()
-            created = svc.files().get(fileId=file_id, fields="id, webViewLink").execute()
-            link = created.get("webViewLink", link)
-        except Exception:
-            pass
-    return link
-
-# ========================== FastAPI ========================
+    try:
+        file = svc.files().create(body=file_metadata, media_body=media, fields="id,webViewLink").execute()
+        if GDRIVE_PUBLIC_LINK:
+            svc.permissions().create(fileId=file["id"], body={"type": "anyone", "role": "reader"}).execute()
+        return file.get("webViewLink")
+    except Exception as e:
+        print(f"🚨 Drive Upload Error: {e}")
+        raise
+# ============ FastAPI 서버 ============
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -164,86 +123,67 @@ def get_verses():
     return {"week_id": WEEK_ID, "title": WEEK_TITLE, "verses": VERSES}
 
 @app.post("/submit")
-async def submit(
+async def submit_audio(
     audio: UploadFile = File(...),
     name: str = Form(...),
     lang: str = Form("kr"),
-    verse_idx: Optional[int] = Form(None),  # 0 또는 1: 개별 채점, None이면 전 구절
-    mime: Optional[str] = Form(None),       # 프론트에서 전달한 녹음 MIME
-    week_id: Optional[str] = Form(None),    # 프론트에서 보낸 주차 (없으면 verses.json의 week_id)
+    verse_idx: int = Form(...),
+    week_id: str = Form(WEEK_ID),
+    mime: str = Form(None)
 ):
-    # 1) 파일 저장 (기기 MIME을 반영해 확장자 결정)
-    b = await audio.read()
-    ext = ".webm"
-    if mime:
-        m = mime.lower()
-        if "mp4" in m or "m4a" in m: ext = ".m4a"
-        elif "ogg" in m:             ext = ".ogg"
-        elif "webm" in m:            ext = ".webm"
-    fname = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{name}-{uuid.uuid4().hex[:6]}{ext}"
-    path = UPLOAD_DIR / fname
-    path.write_bytes(b)
+    # 1. 파일 저장 (원본 유지)
+    data = await audio.read()
+    safe_name = name.replace(" ", "_")
+    verse_label = VERSES[int(verse_idx)]["verse_id"].replace(" ", "").replace(":", "_")
+    today = datetime.now().strftime("%Y-%m-%d")
+    lang_tag = "KR" if lang == "kr" else "EN"
+    ext = ".m4a" if "mp4" in (mime or "") else ".webm"
+    filename = f"{safe_name}-{verse_label}-{today}-{lang_tag}{ext}"
+    filepath = UPLOAD_DIR / filename
+    filepath.write_bytes(data)
 
-    # 2) STT
+    # 2. STT
+    transcript = stt(data, lang_hint=lang, mime_hint=mime)
+
+    # 3. 채점
+    target_text = VERSES[int(verse_idx)][lang]
+    score = round(_similarity(transcript, target_text), 3)
+    passed = score >= THRESHOLD
+
+    # 4. Google Drive 업로드
     try:
-        transcript = stt(b, lang_hint=lang, mime_hint=mime)
-    except Exception as e:
-        return JSONResponse({"ok": False, "error": f"STT failed: {e}"}, status_code=500)
-
-    # 3) 채점
-    scores = []
-    if verse_idx is not None:
-        v = VERSES[int(verse_idx)]
-        target = v["kr"] if lang == "kr" else v["en"]
-        s = round(_similarity(transcript, target), 3)
-        scores.append({"verse": v.get("verse_id", ""), "score": s})
-        passed = (s >= THRESHOLD)
-    else:
-        for v in VERSES:
-            target = v["kr"] if lang == "kr" else v["en"]
-            scores.append({"verse": v.get("verse_id", ""), "score": round(_similarity(transcript, target), 3)})
-        passed = all(s["score"] >= THRESHOLD for s in scores)
-
-    # 4) Drive 업로드 (음성) + CSV 기록/업로드 (주차별 하위 폴더)
-    upload_mime = (mime or "application/octet-stream")
-    week = (week_id or WEEK_ID)
-    link = ""
-    try:
-        link = upload_to_drive(path, mime=upload_mime, kind="audio", week_id=week)
+        file_link = upload_file_to_drive(filepath, week_id, mime or "application/octet-stream")
     except Exception:
-        link = ""
+        file_link = ""
 
+    # 5. CSV 기록
+    row = [
+        datetime.now().isoformat(timespec="seconds"),
+        week_id,
+        name,
+        VERSES[int(verse_idx)]["verse_id"],
+        score,
+        "PASS" if passed else "FAIL",
+        transcript,
+        file_link
+    ]
     write_header = not Path("submissions.csv").exists()
     with open("submissions.csv", "a", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         if write_header:
-            w.writerow(["timestamp","week_id","name","lang","verse_idx","verses","transcript","scores","passed","drive_link"])
-        w.writerow([
-            datetime.now().isoformat(timespec="seconds"),
-            week,
-            name,
-            lang,
-            ("" if verse_idx is None else int(verse_idx)),
-            " | ".join(v.get("verse_id","") for v in VERSES),
-            transcript,
-            "; ".join(f'{s["verse"]}:{s["score"]}' for s in scores),
-            "Y" if passed else "N",
-            link
-        ])
-
-    try:
-        upload_to_drive(Path("submissions.csv"), mime="text/csv", kind="log", week_id=week)
-    except Exception:
-        pass
+            w.writerow(["time", "week", "name", "verse", "score", "result", "transcript", "drive_link"])
+        w.writerow(row)
 
     return {
         "ok": True,
-        "name": name,
-        "lang": lang,
-        "scores": scores,
-        "passed": passed,
+        "week_id": week_id,
+        "file_url": file_link,
         "transcript": transcript,
-        "file": link,
-        "verse_idx": verse_idx,
-        "week_id": week,
+        "score": score,
+        "passed": passed,
     }
+
+# ======== 서버 실행 ========
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=10000)
