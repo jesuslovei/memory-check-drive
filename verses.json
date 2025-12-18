@@ -1,16 +1,16 @@
 {
-  "week_id": "2025-W-48",
-  "title": "제자반 2025년 W48",
+  "week_id": "2025-W-51",
+  "title": "제자반 2025년 W51",
   "verses": [
     {
-      "verse_id": "요한복음 15:7",
-      "kr": "너희가 내 안에 거하고 내 말이 너희 안에 거하면 무엇이든지 원하는 대로 구하라 그리하면 이루리라",
-      "en": "If you abide in me, and my words abide in you, ask whatever you wish, and it will be done for you."
+      "verse_id": "로마서 8:26",
+      "kr": "이와 같이 성령도 우리의 연약함을 도우시나니 우리는 마땅히 기도할 바를 알지 못하나 오직 성령이 말할 수 없는 탄식으로 우리를 위하여 친히 간구하시느니라",
+      "en": "Likewise the Spirit helps us in our weakness. For we do not know what to pray for as we ought, but the Spirit himself intercedes for us with groanings too deep for words."
     },
     {
-      "verse_id": "마태복음 7:11",
-      "kr": "너희가 악한 자라도 좋은 것으로 자식에게 줄 줄 알거든 하물며 하늘에 계신 너희 아버지께서 구하는 자에게 좋은 것으로 주시지 않겠느냐",
-      "en": "If you then, who are evil, know how to give good gifts to your children, how much more will your Father who is in heaven give good things to those who ask him."
+      "verse_id": "갈라디아서 5:22-23",
+      "kr": "오직 성령의 열매는 사랑과 희락과 화평과 오래 참음과 자비와 양선과 충성과 온유와 절제니 이같은 것을 금지할 법이 없느니라",
+      "en": "But the fruit of the Spirit is love, joy, peace, patience, kindness, goodness, faithfulness, gentleness, self-control; against such things there is no law."
     }
   ]
 }
